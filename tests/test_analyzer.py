@@ -381,6 +381,80 @@ def test_analyze_excel_uses_excel_numeric_talk_duration_for_wait_check(tmp_path:
     assert warnings == []
 
 
+def test_analyze_excel_merges_same_person_with_spacing_variants(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "bot.db")
+    storage.set_rule(
+        DepartmentRule(
+            department="SATIŞ",
+            max_wait_minutes=20,
+            morning_latest_start="08:30",
+            break_pre_earliest_leave="11:55",
+            break_start="12:00",
+            break_end="13:00",
+            break_post_latest_start="13:10",
+            shift_end_earliest_leave="18:00",
+        )
+    )
+
+    frame = pd.DataFrame(
+        {
+            "ARAMA TARİHİ": ["08.03.2026", "08.03.2026", "08.03.2026"],
+            "ARAMA SAATİ": ["13:50", "15:13", "15:50"],
+            "KONUŞMA SÜRESİ": ["00:01:00", "00:01:00", "00:01:00"],
+            "ÇALDIRMA SÜRESİ": [0, 0, 0],
+            "DAHİLİ ADI": ["Ahmet Yılmaz - O", "Ahmet   Yılmaz - O", "AHMET YILMAZ - O"],
+        }
+    )
+    file_path = tmp_path / "person_variants.xlsx"
+    frame.to_excel(file_path, index=False)
+
+    results, missing_departments, _report_path, warnings = analyze_excel(file_path, storage, "SATIŞ", "16:00")
+
+    assert missing_departments == []
+    assert warnings == []
+    assert len(results) == 1
+    assert results[0].person == "Ahmet Yılmaz"
+    assert results[0].last_call_time == "08.03.2026 15:51:00"
+    assert any("15:14:00 -> 15:50:00 = 36:00" in item for item in results[0].violations)
+
+
+def test_analyze_excel_sorts_mixed_call_rows_by_call_time(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "bot.db")
+    storage.set_rule(
+        DepartmentRule(
+            department="SATIŞ",
+            max_wait_minutes=20,
+            morning_latest_start="08:30",
+            break_pre_earliest_leave="13:50",
+            break_start="14:00",
+            break_end="15:00",
+            break_post_latest_start="15:15",
+            shift_end_earliest_leave="18:00",
+        )
+    )
+
+    frame = pd.DataFrame(
+        {
+            "ARAMA TARİHİ": ["08.03.2026", "08.03.2026", "08.03.2026"],
+            "ARAMA SAATİ": ["15:50", "13:50", "15:13"],
+            "KONUŞMA SÜRESİ": ["00:01:00", "00:01:00", "00:01:00"],
+            "ÇALDIRMA SÜRESİ": [0, 0, 0],
+            "DAHİLİ ADI": ["Ahmet Yılmaz - O", "Ahmet Yılmaz - O", "Ahmet Yılmaz - O"],
+        }
+    )
+    file_path = tmp_path / "mixed_order.xlsx"
+    frame.to_excel(file_path, index=False)
+
+    results, missing_departments, _report_path, warnings = analyze_excel(file_path, storage, "SATIŞ", "16:00")
+
+    assert missing_departments == []
+    assert warnings == []
+    assert len(results) == 1
+    assert results[0].person == "Ahmet Yılmaz"
+    assert results[0].last_call_time == "08.03.2026 15:51:00"
+    assert any("15:14:00 -> 15:50:00 = 36:00" in item for item in results[0].violations)
+
+
 def test_summarize_after_hours_excel_returns_person_stats_and_non_workers(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "bot.db")
     storage.set_rule(

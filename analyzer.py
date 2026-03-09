@@ -152,7 +152,7 @@ def _extract_person_name(raw_value: Any) -> str | None:
     match = NAME_SUFFIX_PATTERN.match(str(raw_value))
     if not match:
         return None
-    person_name = match.group(1).strip()
+    person_name = " ".join(match.group(1).split())
     suffix = match.group(2).upper().replace("0", "O")
     if suffix != "O" or not person_name:
         return None
@@ -350,12 +350,12 @@ def _prepare_workframe(
     selected_department = department_name.strip() if department_name else None
 
     workframe = dataframe.copy()
-    workframe["_person"] = workframe[column_map["agent_name"]].apply(_extract_person_name)
-    workframe = workframe[workframe["_person"].notna()].copy()
+    workframe["_person_display"] = workframe[column_map["agent_name"]].apply(_extract_person_name)
+    workframe = workframe[workframe["_person_display"].notna()].copy()
+    workframe["_person_key"] = workframe["_person_display"].apply(normalize_person_name)
     leave_people = storage.get_leave_people_set()
     if leave_people:
-        workframe["_person_normalized"] = workframe["_person"].apply(normalize_person_name)
-        workframe = workframe[~workframe["_person_normalized"].isin(leave_people)].copy()
+        workframe = workframe[~workframe["_person_key"].isin(leave_people)].copy()
 
     if workframe.empty:
         raise ValueError("Excel içinde işlenecek 'isim-O' kaydı bulunamadı.")
@@ -373,6 +373,11 @@ def _prepare_workframe(
         workframe["_department"] = workframe[column_map["department"]].fillna("Tanımsız").astype(str).str.strip()
     else:
         raise ValueError("Departman bilgisi bulunamadı. /yukle <departman> kullanın.")
+
+    workframe = workframe.sort_values(
+        ["_department", "_person_key", "_call_start", "_call_end"],
+        kind="stable",
+    ).reset_index(drop=True)
 
     return source, workframe, warnings
 
@@ -401,6 +406,8 @@ def _analyze_person_day(
                 "call_end": min(row["call_end"], analysis_cutoff),
             }
         )
+
+    active_rows.sort(key=lambda item: item["call_start"])
 
     if not active_rows:
         return PersonAnalysis(
@@ -523,15 +530,15 @@ def analyze_excel(
     grouped_rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in workframe.to_dict("records"):
         department = row["_department"]
-        person = row["_person"]
+        person_key = row["_person_key"]
         call_start = row["_call_start"]
         call_end = row["_call_end"]
         report_date = call_start.strftime("%Y-%m-%d")
-        key = (department, person, report_date)
+        key = (department, person_key, report_date)
         grouped_rows.setdefault(key, []).append(
             {
                 "department": department,
-                "person": person,
+                "person": row["_person_display"],
                 "call_start": call_start.to_pydatetime() if hasattr(call_start, "to_pydatetime") else call_start,
                 "call_end": call_end.to_pydatetime() if hasattr(call_end, "to_pydatetime") else call_end,
             }
@@ -589,8 +596,9 @@ def summarize_after_hours_excel(
 
     summaries: list[AfterHoursSummary] = []
     if not after_frame.empty:
-        grouped_after = after_frame.groupby(["_report_date_key", "_report_date", "_department", "_person"], sort=True)
-        for (_date_key, report_date, department, person), rows in grouped_after:
+        grouped_after = after_frame.groupby(["_report_date_key", "_report_date", "_department", "_person_key"], sort=True)
+        for (_date_key, report_date, department, _person_key), rows in grouped_after:
+            person = rows["_person_display"].iloc[0]
             total_talk_seconds = int(rows["_talk_duration"].dt.total_seconds().sum())
             summaries.append(
                 AfterHoursSummary(
@@ -602,17 +610,25 @@ def summarize_after_hours_excel(
                 )
             )
 
-    all_people_by_date = {
-        report_date: sorted(set(rows["_person"].tolist()))
-        for report_date, rows in workframe.groupby("_report_date", sort=True)
-    }
+    all_people_by_date: dict[str, dict[str, str]] = {}
+    for report_date, rows in workframe.groupby("_report_date", sort=True):
+        people = {
+            person_key: person_display
+            for person_key, person_display in rows[["_person_key", "_person_display"]].drop_duplicates().itertuples(index=False)
+        }
+        all_people_by_date[report_date] = people
+
     after_people_by_date = {
-        report_date: set(rows["_person"].tolist())
+        report_date: set(rows["_person_key"].tolist())
         for report_date, rows in after_frame.groupby("_report_date", sort=True)
     }
 
     inactive_people = {
-        report_date: [person for person in people if person not in after_people_by_date.get(report_date, set())]
+        report_date: sorted(
+            person_display
+            for person_key, person_display in people.items()
+            if person_key not in after_people_by_date.get(report_date, set())
+        )
         for report_date, people in all_people_by_date.items()
     }
 
