@@ -1,0 +1,244 @@
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from analyzer import _analyze_person_day, analyze_excel, summarize_after_hours_excel
+from storage import DepartmentRule, Storage
+
+
+RULE = DepartmentRule(
+    department="DİŞ EKİP",
+    max_wait_minutes=15,
+    morning_latest_start="11:10",
+    break_pre_earliest_leave="13:50",
+    break_start="14:00",
+    break_end="15:00",
+    break_post_latest_start="15:15",
+    shift_end_earliest_leave="18:50",
+)
+
+
+def test_partial_cutoff_does_not_flag_future_unseen_call() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 11, 28, 0),
+            "call_end": datetime(2026, 3, 8, 11, 28, 30),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 11, 33, 0),
+            "call_end": datetime(2026, 3, 8, 11, 34, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 11, 30, 0))
+
+    assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
+def test_cross_break_gap_is_not_reported_as_wait_violation() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 13, 49, 30),
+            "call_end": datetime(2026, 3, 8, 13, 50, 39),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 15, 4, 0),
+            "call_end": datetime(2026, 3, 8, 15, 12, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 20, 0))
+
+    assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
+def test_cross_break_gap_keeps_non_break_wait_time() -> None:
+    rule = DepartmentRule(
+        department="DİŞ EKİP",
+        max_wait_minutes=5,
+        morning_latest_start="12:30",
+        break_pre_earliest_leave="11:55",
+        break_start="12:00",
+        break_end="13:00",
+        break_post_latest_start="13:10",
+        shift_end_earliest_leave="18:00",
+    )
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "ali",
+            "call_start": datetime(2026, 3, 8, 11, 58, 0),
+            "call_end": datetime(2026, 3, 8, 11, 59, 0),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "ali",
+            "call_start": datetime(2026, 3, 8, 13, 8, 0),
+            "call_end": datetime(2026, 3, 8, 13, 9, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, rule, [], datetime(2026, 3, 8, 13, 9, 0))
+
+    assert any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
+def test_post_shift_gap_is_not_reported_as_wait_violation() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "uzay",
+            "call_start": datetime(2026, 3, 8, 18, 49, 0),
+            "call_end": datetime(2026, 3, 8, 18, 50, 15),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "uzay",
+            "call_start": datetime(2026, 3, 8, 19, 16, 56),
+            "call_end": datetime(2026, 3, 8, 19, 18, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 19, 30, 0))
+
+    assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
+def test_analyze_excel_finds_header_below_first_fifteen_rows(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "bot.db")
+    storage.set_rule(
+        DepartmentRule(
+            department="SATIŞ",
+            max_wait_minutes=15,
+            morning_latest_start="09:30",
+            break_pre_earliest_leave="11:55",
+            break_start="12:00",
+            break_end="13:00",
+            break_post_latest_start="13:10",
+            shift_end_earliest_leave="18:00",
+        )
+    )
+
+    rows = [["meta", "meta", "meta", "meta", "meta"] for _ in range(20)]
+    rows.append(["ARAMA TARİHİ", "ARAMA SAATİ", "KONUŞMA SÜRESİ", "ÇALDIRMA SÜRESİ", "DAHİLİ ADI"])
+    rows.append(["08.03.2026", "09:00", "00:02:00", "00:00:10", "Ali - O"])
+    frame = pd.DataFrame(rows)
+    file_path = tmp_path / "late_header.xlsx"
+    frame.to_excel(file_path, index=False, header=False)
+
+    results, missing_departments, _report_path, warnings = analyze_excel(file_path, storage, "SATIŞ")
+
+    assert results == []
+    assert missing_departments == []
+    assert warnings == []
+
+
+def test_analyze_excel_rejects_invalid_headerless_fallback(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "bot.db")
+    storage.set_rule(
+        DepartmentRule(
+            department="SATIŞ",
+            max_wait_minutes=15,
+            morning_latest_start="08:30",
+            break_pre_earliest_leave="11:55",
+            break_start="12:00",
+            break_end="13:00",
+            break_post_latest_start="13:10",
+            shift_end_earliest_leave="18:00",
+        )
+    )
+
+    frame = pd.DataFrame(
+        [
+            ["x", "not-a-date", "not-a-time", "x", "bad", "bad", "unknown"],
+            ["y", "still-bad", "still-bad", "y", "bad", "bad", "unknown"],
+        ]
+    )
+    file_path = tmp_path / "invalid_fallback.xlsx"
+    frame.to_excel(file_path, index=False, header=False)
+
+    with pytest.raises(ValueError, match="sabit sütun düzeni doğrulanamadı"):
+        analyze_excel(file_path, storage, "SATIŞ")
+
+
+def test_analyze_excel_uses_excel_numeric_talk_duration_for_wait_check(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "bot.db")
+    storage.set_rule(
+        DepartmentRule(
+            department="SATIŞ",
+            max_wait_minutes=10,
+            morning_latest_start="13:00",
+            break_pre_earliest_leave="17:00",
+            break_start="17:30",
+            break_end="18:00",
+            break_post_latest_start="18:05",
+            shift_end_earliest_leave="23:00",
+        )
+    )
+
+    frame = pd.DataFrame(
+        {
+            "ARAMA TARİHİ": ["08.03.2026", "08.03.2026"],
+            "ARAMA SAATİ": ["12:00", "12:35"],
+            "KONUŞMA SÜRESİ": [30 / 1440, 1 / 1440],
+            "ÇALDIRMA SÜRESİ": [0, 0],
+            "DAHİLİ ADI": ["Ali - O", "Ali - O"],
+        }
+    )
+    file_path = tmp_path / "numeric_duration.xlsx"
+    frame.to_excel(file_path, index=False)
+
+    results, missing_departments, _report_path, warnings = analyze_excel(file_path, storage, "SATIŞ")
+
+    assert results == []
+    assert missing_departments == []
+    assert warnings == []
+
+
+def test_summarize_after_hours_excel_returns_person_stats_and_non_workers(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "bot.db")
+    storage.set_rule(
+        DepartmentRule(
+            department="SATIŞ",
+            max_wait_minutes=15,
+            morning_latest_start="08:30",
+            break_pre_earliest_leave="11:55",
+            break_start="12:00",
+            break_end="13:00",
+            break_post_latest_start="13:10",
+            shift_end_earliest_leave="18:00",
+        )
+    )
+
+    frame = pd.DataFrame(
+        {
+            "ARAMA TARİHİ": ["08.03.2026", "08.03.2026", "08.03.2026", "08.03.2026"],
+            "ARAMA SAATİ": ["18:50", "19:05", "19:20", "18:40"],
+            "KONUŞMA SÜRESİ": ["00:05:00", "00:10:00", "00:02:30", "00:03:00"],
+            "ÇALDIRMA SÜRESİ": [0, 0, 0, 0],
+            "DAHİLİ ADI": ["Ahmet - O", "Ahmet - O", "Ahmet - O", "Mehmet - O"],
+        }
+    )
+    file_path = tmp_path / "after_hours.xlsx"
+    frame.to_excel(file_path, index=False)
+
+    summaries, inactive_people, warnings = summarize_after_hours_excel(file_path, storage, "SATIŞ", "19:00")
+
+    assert warnings == []
+    assert len(summaries) == 1
+    assert summaries[0].person == "Ahmet"
+    assert summaries[0].call_count == 2
+    assert summaries[0].total_talk_duration == "12 dakika 30 saniye"
+    assert inactive_people == {"08.03.2026": ["Mehmet"]}
