@@ -279,15 +279,25 @@ def _build_daily_window(base_date: datetime, start_text: str, end_text: str) -> 
     return datetime.combine(base_date.date(), start_clock), datetime.combine(base_date.date(), end_clock)
 
 
-def _effective_gap_seconds(
+def _max_contiguous_gap_segment(
     start_dt: datetime,
     end_dt: datetime,
     break_start_dt: datetime,
     break_end_dt: datetime,
-) -> float:
+) -> tuple[float, datetime, datetime]:
     if end_dt <= start_dt:
-        return 0.0
-    return max(0.0, (end_dt - start_dt).total_seconds() - _overlap_seconds(start_dt, end_dt, break_start_dt, break_end_dt))
+        return 0.0, start_dt, start_dt
+
+    segments: list[tuple[datetime, datetime]] = []
+    if start_dt < break_start_dt:
+        segments.append((start_dt, min(end_dt, break_start_dt)))
+    if end_dt > break_end_dt:
+        segments.append((max(start_dt, break_end_dt), end_dt))
+    if not segments:
+        segments.append((start_dt, end_dt))
+
+    best_start, best_end = max(segments, key=lambda segment: (segment[1] - segment[0]).total_seconds())
+    return max(0.0, (best_end - best_start).total_seconds()), best_start, best_end
 
 
 def _format_gap(seconds: float) -> str:
@@ -448,22 +458,32 @@ def _analyze_person_day(
         if raw_gap <= 0:
             continue
 
-        effective_gap = _effective_gap_seconds(previous_row["call_end"], gap_control_end, break_start_dt, break_end_dt)
+        effective_gap, gap_start, gap_end = _max_contiguous_gap_segment(
+            previous_row["call_end"],
+            gap_control_end,
+            break_start_dt,
+            break_end_dt,
+        )
         if effective_gap > allowed_gap_seconds:
             violations.append(
                 "İki çağrı arası bekleme süresi aşıldı "
-                f"({previous_row['call_end'].strftime('%H:%M:%S')} -> {gap_control_end.strftime('%H:%M:%S')} = "
+                f"({gap_start.strftime('%H:%M:%S')} -> {gap_end.strftime('%H:%M:%S')} = "
                 f"{_format_gap(effective_gap)})"
             )
 
     trailing_start = last_call_end
     trailing_end = gap_check_limit
     if trailing_end > trailing_start:
-        trailing_gap = _effective_gap_seconds(trailing_start, trailing_end, break_start_dt, break_end_dt)
+        trailing_gap, gap_start, gap_end = _max_contiguous_gap_segment(
+            trailing_start,
+            trailing_end,
+            break_start_dt,
+            break_end_dt,
+        )
         if trailing_gap > allowed_gap_seconds:
             violations.append(
                 "İki çağrı arası bekleme süresi aşıldı "
-                f"({trailing_start.strftime('%H:%M:%S')} -> {trailing_end.strftime('%H:%M:%S')} = "
+                f"({gap_start.strftime('%H:%M:%S')} -> {gap_end.strftime('%H:%M:%S')} = "
                 f"{_format_gap(trailing_gap)})"
             )
 

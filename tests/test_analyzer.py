@@ -227,6 +227,48 @@ def test_cross_break_gap_keeps_non_break_wait_time() -> None:
     assert any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
 
 
+def test_cross_break_gap_does_not_sum_separate_short_segments() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "ali",
+            "call_start": datetime(2026, 3, 8, 13, 40, 0),
+            "call_end": datetime(2026, 3, 8, 13, 52, 0),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "ali",
+            "call_start": datetime(2026, 3, 8, 15, 8, 0),
+            "call_end": datetime(2026, 3, 8, 15, 12, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 20, 0))
+
+    assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
+def test_cross_break_gap_reports_only_longest_contiguous_segment() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "ali",
+            "call_start": datetime(2026, 3, 8, 13, 49, 0),
+            "call_end": datetime(2026, 3, 8, 13, 50, 0),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "ali",
+            "call_start": datetime(2026, 3, 8, 15, 16, 0),
+            "call_end": datetime(2026, 3, 8, 15, 20, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
+
+    assert any("15:00:00 -> 15:16:00 = 16:00" in item for item in result.violations)
+
+
 def test_post_shift_gap_is_not_reported_as_wait_violation() -> None:
     rows = [
         {
