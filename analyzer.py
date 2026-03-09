@@ -309,6 +309,26 @@ def _format_duration_words(total_seconds: int) -> str:
     return " ".join(parts)
 
 
+def _truncate_to_minute(value: datetime) -> datetime:
+    return value.replace(second=0, microsecond=0)
+
+
+def _difference_seconds(later: datetime, earlier: datetime) -> float:
+    return (later - earlier).total_seconds()
+
+
+def _is_late_with_minute_grace(actual: datetime, threshold: datetime) -> bool:
+    return actual > threshold and _difference_seconds(actual, threshold) >= 60
+
+
+def _is_early_with_minute_grace(actual: datetime, threshold: datetime) -> bool:
+    return actual < threshold and _difference_seconds(threshold, actual) >= 60
+
+
+def _threshold_fully_passed(reference: datetime, threshold: datetime) -> bool:
+    return reference >= threshold and _difference_seconds(reference, threshold) >= 60
+
+
 def _prepare_workframe(
     file_path: str | Path,
     storage: Storage,
@@ -386,33 +406,33 @@ def _analyze_person_day(
     first_call = active_rows[0]["call_start"]
     last_call_end = max(row["call_end"] for row in active_rows)
 
-    if analysis_cutoff >= morning_latest_dt and first_call > morning_latest_dt:
+    if _threshold_fully_passed(analysis_cutoff, morning_latest_dt) and _is_late_with_minute_grace(first_call, morning_latest_dt):
         violations.append(
             f"Sabah ilk çağrı geç başladı ({first_call.strftime('%H:%M:%S')} > {rule.morning_latest_start})"
         )
 
     pre_break_window_end = min(analysis_cutoff, break_start_dt)
-    if pre_break_window_end >= break_pre_earliest_leave_dt:
+    if _threshold_fully_passed(pre_break_window_end, break_pre_earliest_leave_dt):
         pre_break_calls = [row for row in active_rows if row["call_end"] <= pre_break_window_end]
         if pre_break_calls:
             last_pre_break_end = max(row["call_end"] for row in pre_break_calls)
-            if last_pre_break_end < break_pre_earliest_leave_dt:
+            if _is_early_with_minute_grace(last_pre_break_end, break_pre_earliest_leave_dt):
                 violations.append(
                     f"Mola öncesi erken çıktı ({last_pre_break_end.strftime('%H:%M:%S')} < {rule.break_pre_earliest_leave})"
                 )
 
-    if analysis_cutoff >= break_post_latest_dt:
+    if _threshold_fully_passed(analysis_cutoff, break_post_latest_dt):
         post_break_calls = [row for row in active_rows if row["call_start"] >= break_end_dt]
         if not post_break_calls:
             violations.append(f"Mola sonrası çağrı geç başladı ({rule.break_post_latest_start} sonrasına kaldı)")
         else:
             first_post_break = min(row["call_start"] for row in post_break_calls)
-            if first_post_break > break_post_latest_dt:
+            if _is_late_with_minute_grace(first_post_break, break_post_latest_dt):
                 violations.append(
                     f"Mola sonrası geç başladı ({first_post_break.strftime('%H:%M:%S')} > {rule.break_post_latest_start})"
                 )
 
-    if analysis_cutoff >= shift_end_earliest_leave_dt and last_call_end < shift_end_earliest_leave_dt:
+    if _threshold_fully_passed(analysis_cutoff, shift_end_earliest_leave_dt) and _is_early_with_minute_grace(last_call_end, shift_end_earliest_leave_dt):
         violations.append(
             f"Mesai sonundan önce çıktı ({last_call_end.strftime('%H:%M:%S')} < {rule.shift_end_earliest_leave})"
         )

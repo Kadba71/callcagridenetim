@@ -43,6 +43,138 @@ def test_partial_cutoff_does_not_flag_future_unseen_call() -> None:
     assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
 
 
+def test_morning_start_allows_seconds_within_same_minute() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 11, 10, 30),
+            "call_end": datetime(2026, 3, 8, 11, 12, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 11, 20, 0))
+
+    assert not any("Sabah ilk çağrı geç başladı" in item for item in result.violations)
+
+
+def test_morning_start_flags_next_minute_as_violation() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 11, 11, 0),
+            "call_end": datetime(2026, 3, 8, 11, 12, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 11, 20, 0))
+
+    assert any("Sabah ilk çağrı geç başladı" in item for item in result.violations)
+
+
+def test_break_pre_allows_seconds_within_same_minute() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 11, 0, 0),
+            "call_end": datetime(2026, 3, 8, 13, 49, 30),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 13, 55, 0))
+
+    assert not any("Mola öncesi erken çıktı" in item for item in result.violations)
+
+
+def test_break_pre_flags_full_minute_early_exit() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 11, 0, 0),
+            "call_end": datetime(2026, 3, 8, 13, 49, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 13, 55, 0))
+
+    assert any("Mola öncesi erken çıktı" in item for item in result.violations)
+
+
+def test_break_post_allows_seconds_within_same_minute() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 13, 50, 0),
+            "call_end": datetime(2026, 3, 8, 13, 55, 0),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 15, 15, 30),
+            "call_end": datetime(2026, 3, 8, 15, 16, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
+
+    assert not any("Mola sonrası geç başladı" in item for item in result.violations)
+
+
+def test_break_post_flags_next_minute_start() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 13, 50, 0),
+            "call_end": datetime(2026, 3, 8, 13, 55, 0),
+        },
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 15, 16, 0),
+            "call_end": datetime(2026, 3, 8, 15, 17, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
+
+    assert any("Mola sonrası geç başladı" in item for item in result.violations)
+
+
+def test_shift_end_allows_seconds_within_same_minute() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "uzay",
+            "call_start": datetime(2026, 3, 8, 18, 49, 0),
+            "call_end": datetime(2026, 3, 8, 18, 49, 30),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 19, 0, 0))
+
+    assert not any("Mesai sonundan önce çıktı" in item for item in result.violations)
+
+
+def test_shift_end_flags_full_minute_early_exit() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "uzay",
+            "call_start": datetime(2026, 3, 8, 18, 48, 0),
+            "call_end": datetime(2026, 3, 8, 18, 49, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 19, 0, 0))
+
+    assert any("Mesai sonundan önce çıktı" in item for item in result.violations)
+
+
 def test_cross_break_gap_is_not_reported_as_wait_violation() -> None:
     rows = [
         {
