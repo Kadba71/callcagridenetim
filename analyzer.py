@@ -426,11 +426,24 @@ def _analyze_person_day(
     violations: list[str] = []
     first_call = active_rows[0]["call_start"]
     last_call_end = max(row["call_end"] for row in active_rows)
+    allowed_gap_seconds = rule.max_wait_minutes * 60
+    morning_control_start_dt = morning_latest_dt - timedelta(seconds=allowed_gap_seconds)
+    morning_tracking_rows = [row for row in active_rows if row["call_end"] > morning_control_start_dt]
 
-    if _threshold_fully_passed(analysis_cutoff, morning_latest_dt) and _is_late_with_minute_grace(first_call, morning_latest_dt):
-        violations.append(
-            f"Sabah ilk çağrı geç başladı ({first_call.strftime('%H:%M:%S')} > {rule.morning_latest_start})"
-        )
+    if _threshold_fully_passed(analysis_cutoff, morning_latest_dt):
+        if not morning_tracking_rows:
+            violations.append(
+                f"Sabah ilk çağrı geç başladı ({rule.morning_latest_start} sonrasına kaldı)"
+            )
+        else:
+            first_morning_activity = min(
+                max(row["call_start"], morning_control_start_dt)
+                for row in morning_tracking_rows
+            )
+            if _is_late_with_minute_grace(first_morning_activity, morning_latest_dt):
+                violations.append(
+                    f"Sabah ilk çağrı geç başladı ({first_morning_activity.strftime('%H:%M:%S')} > {rule.morning_latest_start})"
+                )
 
     pre_break_window_end = min(analysis_cutoff, break_start_dt)
     if _threshold_fully_passed(pre_break_window_end, break_pre_earliest_leave_dt):
@@ -466,19 +479,19 @@ def _analyze_person_day(
             f"Mesai sonundan önce çıktı ({last_call_end.strftime('%H:%M:%S')} < {rule.shift_end_earliest_leave})"
         )
 
-    allowed_gap_seconds = rule.max_wait_minutes * 60
     gap_check_limit = min(analysis_cutoff, shift_end_earliest_leave_dt)
     for previous_row, current_row in zip(active_rows, active_rows[1:]):
         if previous_row["call_end"] >= gap_check_limit:
             continue
 
+        gap_control_start = max(previous_row["call_end"], morning_control_start_dt)
         gap_control_end = min(current_row["call_start"], gap_check_limit)
-        raw_gap = (gap_control_end - previous_row["call_end"]).total_seconds()
+        raw_gap = (gap_control_end - gap_control_start).total_seconds()
         if raw_gap <= 0:
             continue
 
         effective_gap, gap_start, gap_end = _max_contiguous_gap_segment(
-            previous_row["call_end"],
+            gap_control_start,
             gap_control_end,
             break_start_dt,
             break_end_dt,
@@ -490,7 +503,7 @@ def _analyze_person_day(
                 f"{_format_gap(effective_gap)})"
             )
 
-    trailing_start = last_call_end
+    trailing_start = max(last_call_end, morning_control_start_dt)
     trailing_end = gap_check_limit
     if trailing_end > trailing_start:
         trailing_gap, gap_start, gap_end = _max_contiguous_gap_segment(

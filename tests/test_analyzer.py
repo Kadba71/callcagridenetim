@@ -73,6 +73,99 @@ def test_morning_start_flags_next_minute_as_violation() -> None:
     assert any("Sabah ilk çağrı geç başladı" in item for item in result.violations)
 
 
+def test_pre_shift_calls_do_not_trigger_wait_violation_before_control_window() -> None:
+    rule = DepartmentRule(
+        department="HOSGELDIN",
+        max_wait_minutes=15,
+        morning_latest_start="11:25",
+        break_pre_earliest_leave="13:45",
+        break_start="14:00",
+        break_end="15:00",
+        break_post_latest_start="15:20",
+        shift_end_earliest_leave="18:30",
+    )
+    rows = [
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 9, 20, 0),
+            "call_end": datetime(2026, 3, 10, 9, 21, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 10, 0, 0),
+            "call_end": datetime(2026, 3, 10, 10, 1, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 11, 0, 0),
+            "call_end": datetime(2026, 3, 10, 11, 1, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 11, 20, 0),
+            "call_end": datetime(2026, 3, 10, 11, 21, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 11, 30, 0),
+            "call_end": datetime(2026, 3, 10, 11, 31, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, rule, [], datetime(2026, 3, 10, 11, 40, 0))
+
+    assert not any("Sabah ilk çağrı geç başladı" in item for item in result.violations)
+    assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
+def test_morning_late_ignores_calls_before_control_window() -> None:
+    rule = DepartmentRule(
+        department="HOSGELDIN",
+        max_wait_minutes=15,
+        morning_latest_start="11:25",
+        break_pre_earliest_leave="13:45",
+        break_start="14:00",
+        break_end="15:00",
+        break_post_latest_start="15:20",
+        shift_end_earliest_leave="18:30",
+    )
+    rows = [
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 9, 20, 0),
+            "call_end": datetime(2026, 3, 10, 9, 21, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 10, 0, 0),
+            "call_end": datetime(2026, 3, 10, 10, 1, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 11, 0, 0),
+            "call_end": datetime(2026, 3, 10, 11, 1, 0),
+        },
+        {
+            "department": "HOSGELDIN",
+            "person": "Ahmet",
+            "call_start": datetime(2026, 3, 10, 11, 30, 0),
+            "call_end": datetime(2026, 3, 10, 11, 31, 0),
+        },
+    ]
+
+    result = _analyze_person_day(rows, rule, [], datetime(2026, 3, 10, 11, 40, 0))
+
+    assert any("Sabah ilk çağrı geç başladı" in item for item in result.violations)
+
+
 def test_break_pre_allows_seconds_within_same_minute() -> None:
     rows = [
         {
@@ -158,6 +251,21 @@ def test_break_post_flags_next_minute_start() -> None:
     result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
 
     assert any("Mola sonrası geç başladı" in item for item in result.violations)
+
+
+def test_break_post_flags_when_no_call_after_break() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 13, 40, 0),
+            "call_end": datetime(2026, 3, 8, 13, 55, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
+
+    assert any("Mola sonrası çağrı geç başladı" in item for item in result.violations)
 
 
 def test_break_post_does_not_flag_call_overlapping_break_end() -> None:
