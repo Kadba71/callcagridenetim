@@ -226,6 +226,21 @@ def test_cross_break_gap_is_not_reported_as_wait_violation() -> None:
     assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
 
 
+def test_trailing_gap_within_break_is_not_reported_as_wait_violation() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "berna - 382",
+            "call_start": datetime(2026, 3, 10, 13, 58, 0),
+            "call_end": datetime(2026, 3, 10, 14, 0, 54),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 10, 14, 25, 0))
+
+    assert not any("İki çağrı arası bekleme süresi aşıldı" in item for item in result.violations)
+
+
 def test_cross_break_gap_keeps_non_break_wait_time() -> None:
     rule = DepartmentRule(
         department="DİŞ EKİP",

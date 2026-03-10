@@ -290,11 +290,15 @@ def _max_contiguous_gap_segment(
 
     segments: list[tuple[datetime, datetime]] = []
     if start_dt < break_start_dt:
-        segments.append((start_dt, min(end_dt, break_start_dt)))
+        before_break_end = min(end_dt, break_start_dt)
+        if before_break_end > start_dt:
+            segments.append((start_dt, before_break_end))
     if end_dt > break_end_dt:
-        segments.append((max(start_dt, break_end_dt), end_dt))
+        after_break_start = max(start_dt, break_end_dt)
+        if end_dt > after_break_start:
+            segments.append((after_break_start, end_dt))
     if not segments:
-        segments.append((start_dt, end_dt))
+        return 0.0, start_dt, start_dt
 
     best_start, best_end = max(segments, key=lambda segment: (segment[1] - segment[0]).total_seconds())
     return max(0.0, (best_end - best_start).total_seconds()), best_start, best_end
