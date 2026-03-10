@@ -407,6 +407,17 @@ def _format_rule(rule: DepartmentRule) -> str:
     )
 
 
+def _format_violation_result(result) -> str:
+    return "\n".join(
+        [
+            f"Personel: {result.person}",
+            "Kural ihlalleri:",
+            *[f"🔴 {item}" for item in result.violations],
+            f"Son çağrı saati: {result.last_call_time}",
+        ]
+    )
+
+
 async def rule_show(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     department = _join_args(context)
     if not department:
@@ -664,15 +675,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         lines: list[str] = []
         for result in results[:20]:
-            lines.append(
-                "\n".join(
-                    [
-                        f"Personel: {result.person}",
-                        "Kural ihlalleri:",
-                        *[f"🔴 {item}" for item in result.violations],
-                    ]
-                )
-            )
+            lines.append(_format_violation_result(result))
         if len(results) > 20:
             lines.append(f"Toplam {len(results)} personel analiz edildi. Tüm detaylar ekli Excel dosyasında.")
 

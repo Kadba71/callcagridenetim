@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from bot import MAX_TELEGRAM_MESSAGE_LENGTH, _build_rule, _parse_rule_command, _parse_upload_command, _send_chunked_text
+from analyzer import PersonAnalysis
+from bot import (
+    MAX_TELEGRAM_MESSAGE_LENGTH,
+    _build_rule,
+    _format_violation_result,
+    _parse_rule_command,
+    _parse_upload_command,
+    _send_chunked_text,
+)
 from storage import Storage, normalize_department_name, normalize_person_name
 
 
@@ -73,3 +81,20 @@ def test_send_chunked_text_splits_oversized_single_block() -> None:
     assert len(update.message.calls) == 2
     assert len(update.message.calls[0]) == MAX_TELEGRAM_MESSAGE_LENGTH
     assert len(update.message.calls[1]) == 100
+
+
+def test_format_violation_result_includes_last_call_time() -> None:
+    result = PersonAnalysis(
+        person="Ahmet Yılmaz",
+        department="SATIŞ",
+        report_date="10.03.2026",
+        last_call_time="10.03.2026 18:42:00",
+        violations=["Mesai sonundan önce çıktı (18:42:00 < 19:00)"],
+        supervisor="Tanımsız",
+    )
+
+    text = _format_violation_result(result)
+
+    assert "Personel: Ahmet Yılmaz" in text
+    assert "Kural ihlalleri:" in text
+    assert "Son çağrı saati: 10.03.2026 18:42:00" in text
