@@ -103,6 +103,21 @@ def test_break_pre_flags_full_minute_early_exit() -> None:
     assert any("Mola öncesi erken çıktı" in item for item in result.violations)
 
 
+def test_break_pre_does_not_flag_call_overlapping_break_start() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "akin",
+            "call_start": datetime(2026, 3, 8, 13, 58, 0),
+            "call_end": datetime(2026, 3, 8, 14, 2, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 14, 10, 0))
+
+    assert not any("Mola öncesi erken çıktı" in item for item in result.violations)
+
+
 def test_break_post_allows_seconds_within_same_minute() -> None:
     rows = [
         {
@@ -143,6 +158,21 @@ def test_break_post_flags_next_minute_start() -> None:
     result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
 
     assert any("Mola sonrası geç başladı" in item for item in result.violations)
+
+
+def test_break_post_does_not_flag_call_overlapping_break_end() -> None:
+    rows = [
+        {
+            "department": "DİŞ EKİP",
+            "person": "burak",
+            "call_start": datetime(2026, 3, 8, 14, 55, 0),
+            "call_end": datetime(2026, 3, 8, 15, 5, 0),
+        }
+    ]
+
+    result = _analyze_person_day(rows, RULE, [], datetime(2026, 3, 8, 15, 30, 0))
+
+    assert not any("Mola sonrası" in item for item in result.violations)
 
 
 def test_shift_end_allows_seconds_within_same_minute() -> None:
